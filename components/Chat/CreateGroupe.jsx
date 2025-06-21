@@ -160,9 +160,7 @@ const createGroup = async () => {
             </Text>
           </View>
         )}
-        {!item.isGroup && (
-          <View style={item.isOnline ? styles.onlineBadge : styles.offlineBadge} />
-        )}
+        
       </View>
       
       <Text style={styles.friendName}>{item.name}</Text>
