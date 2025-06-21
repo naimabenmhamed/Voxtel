@@ -475,7 +475,7 @@ const ChatList = () => {
         {item.hasUnreadMessages && (
           <View style={styles.newMessageIndicator} />
         )}
-        {!item.isGroup && (
+        {/* {!item.isGroup && (
           <TouchableOpacity
             style={styles.deleteButton}
             onPress={() => deleteFriend(item.id, item.name)}
@@ -483,7 +483,7 @@ const ChatList = () => {
           >
             <Icon name="trash-outline" size={16} color="#FF6B6B" />
           </TouchableOpacity>
-        )}
+        )} */}
       </View>
     </TouchableOpacity>
   );
