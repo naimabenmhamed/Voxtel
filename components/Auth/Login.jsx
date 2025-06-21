@@ -112,6 +112,37 @@ export default function Login({ navigation }) {
       Alert.alert('Erreur', 'Veuillez entrer votre adresse email');
       return;
     }
+    const handlePasswordReset = async () => {
+  if (!email) {
+    Alert.alert('Erreur', 'Veuillez entrer votre adresse email');
+    return;
+  }
+
+  try {
+    await auth().sendPasswordResetEmail(email);
+    Alert.alert(
+      'Email envoyé',
+      'Un email de réinitialisation du mot de passe a été envoyé à votre adresse.'
+    );
+  } catch (error) {
+    console.error('Erreur reset password:', error);
+    let message = 'Une erreur est survenue';
+
+    switch (error.code) {
+      case 'auth/invalid-email':
+        message = 'Adresse email invalide';
+        break;
+      case 'auth/user-not-found':
+        message = 'Aucun utilisateur trouvé avec cet email';
+        break;
+      default:
+        message = error.message;
+    }
+
+    Alert.alert('Erreur', message);
+  }
+};
+
 
     try {
       const methods = await auth().fetchSignInMethodsForEmail(email);
@@ -190,6 +221,12 @@ export default function Login({ navigation }) {
             Renvoyer l'email de vérification
           </Text>
         </TouchableOpacity>
+        <TouchableOpacity style={styles.linkButton} onPress={handlePasswordReset}>
+  <Text style={styles.linkText}>
+    Mot de passe oublié ?
+  </Text>
+</TouchableOpacity>
+
       </View>
     </SafeAreaView>
   );
