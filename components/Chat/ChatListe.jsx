@@ -7,8 +7,7 @@ import {
   StyleSheet, 
   Image,
   StatusBar,
-  Platform,
-  Alert
+  Platform
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import auth from '@react-native-firebase/auth';
@@ -16,12 +15,10 @@ import firestore from '@react-native-firebase/firestore';
 import { useNavigation } from '@react-navigation/native';
 
 const ChatList = () => {
-  const [friends, setFriends] = useState([]);
+  const [combinedList, setCombinedList] = useState([]);
   const [loading, setLoading] = useState(true);
   const navigation = useNavigation();
   const currentUser = auth().currentUser;
-  const [groups, setGroups] = useState([]);
-  const [conversations, setConversations] = useState([]);
 
   const getTimestamp = (timestamp) => {
     if (!timestamp) return 0;
@@ -46,261 +43,279 @@ const ChatList = () => {
     }
   };
 
-  // Fonction pour supprimer un ami
-  const deleteFriend = async (friendId, friendName) => {
-    Alert.alert(
-      "Supprimer l'ami",
-      `Êtes-vous sûr de vouloir supprimer ${friendName} de votre liste d'amis ?`,
-      [
-        {
-          text: "Annuler",
-          style: "cancel"
-        },
-        {
-          text: "Supprimer",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              // Trouver et supprimer la relation d'amitié dans la collection friends
-              const friendsQuery = await firestore()
-                .collection('friends')
-                .where('users', 'array-contains', currentUser.uid)
-                .get();
-
-              for (const doc of friendsQuery.docs) {
-                const data = doc.data();
-                if (data.users && data.users.includes(friendId)) {
-                  await firestore().collection('friends').doc(doc.id).delete();
-                  break;
-                }
-              }
-
-              // Optionnel : Supprimer aussi la conversation privée
-              const conversationsQuery = await firestore()
-                .collection('conversations')
-                .where('participants', 'array-contains', currentUser.uid)
-                .get();
-
-              for (const doc of conversationsQuery.docs) {
-                const data = doc.data();
-                if (data.participants && 
-                    data.participants.includes(friendId) && 
-                    data.participants.length === 2) {
-                  await firestore().collection('conversations').doc(doc.id).delete();
-                  break;
-                }
-              }
-
-              Alert.alert("Succès", `${friendName} a été supprimé de votre liste d'amis.`);
-            } catch (error) {
-              console.log('Erreur lors de la suppression de l\'ami:', error);
-              Alert.alert("Erreur", "Impossible de supprimer cet ami. Veuillez réessayer.");
-            }
-          }
-        }
-      ]
-    );
+  const getAvatarUrl = (userData) => {
+    if (userData?.photoURL) {
+      return userData.photoURL;
+    } else if (userData?.photoProfil) {
+      if (userData.photoProfil.startsWith('data:image')) {
+        return userData.photoProfil;
+      } else if (userData.photoProfil.startsWith('/9j/')) {
+        return `data:image/jpeg;base64,${userData.photoProfil}`;
+      } else {
+        return userData.photoProfil;
+      }
+    } else if (userData?.avatar) {
+      return userData.avatar;
+    }
+    return null;
   };
 
-  // Filtrer pour ne garder que les utilisateurs qui sont dans la collection friends
-  const combinedList = [...groups, ...friends, ...conversations]
-    .filter((item, index, self) => {
-      // Supprimer les doublons
-      const isUnique = index === self.findIndex(t => t.id === item.id);
-      
-      // Pour les conversations individuelles, vérifier qu'ils sont amis
-      if (!item.isGroup && !item.conversationId) {
-        // Si c'est un ami direct de la collection friends, on le garde
-        return isUnique;
-      }
-      
-      // Pour les conversations, vérifier qu'ils sont toujours amis
-      if (!item.isGroup && item.conversationId) {
-        // Vérifier si l'utilisateur est toujours dans la liste d'amis
-        const isFriend = friends.some(friend => friend.id === item.id);
-        return isUnique && isFriend;
-      }
-      
-      // Pour les groupes, toujours garder
-      return isUnique;
-    })
-    .sort((a, b) => {
-      if (a.hasUnreadMessages && !b.hasUnreadMessages) return -1;
-      if (!a.hasUnreadMessages && b.hasUnreadMessages) return 1;
-      
-      const aTime = a.lastMessageTime || 0;
-      const bTime = b.lastMessageTime || 0;
-      return bTime - aTime;
-    });
+  // Nouvelle fonction pour récupérer le dernier message d'une conversation avec un ami
+  const getLastMessageForFriend = async (friendId) => {
+    try {
+      // Vérifier d'abord si cet utilisateur est bien dans la collection friends
+      const friendQuery = await firestore()
+        .collection('friends')
+        .where('users', 'array-contains', currentUser.uid)
+        .get();
 
-  const goToCreateGroup = () => {
-    navigation.navigate('CreateGroup');
+      let isFriend = false;
+      for (const doc of friendQuery.docs) {
+        const data = doc.data();
+        if (data.users && data.users.includes(friendId)) {
+          isFriend = true;
+          break;
+        }
+      }
+
+      // Si ce n'est pas un ami, ne pas récupérer le message
+      if (!isFriend) {
+        return { lastMessage: null, conversationId: null };
+      }
+
+      // Chercher une conversation entre l'utilisateur actuel et cet ami
+      const conversationQuery = await firestore()
+        .collection('conversations')
+        .where('participants', 'array-contains', currentUser.uid)
+        .get();
+
+      let lastMessage = null;
+      let conversationId = null;
+
+      for (const doc of conversationQuery.docs) {
+        const data = doc.data();
+        if (data.participants && data.participants.includes(friendId)) {
+          conversationId = doc.id;
+          
+          // Récupérer le dernier message de cette conversation
+          const messagesQuery = await firestore()
+            .collection('conversations')
+            .doc(doc.id)
+            .collection('messages')
+            .orderBy('timestamp', 'desc')
+            .limit(1)
+            .get();
+
+          if (!messagesQuery.empty) {
+            const messageDoc = messagesQuery.docs[0];
+            const messageData = messageDoc.data();
+            lastMessage = {
+              text: messageData.text || '',
+              senderId: messageData.senderId || '',
+              timestamp: messageData.timestamp || null,
+            };
+          }
+          break;
+        }
+      }
+
+      return { lastMessage, conversationId };
+    } catch (error) {
+      console.log('Erreur lors de la récupération du dernier message:', error);
+      return { lastMessage: null, conversationId: null };
+    }
   };
 
   useEffect(() => {
     if (!currentUser) return;
 
+    // Stocker toutes les données dans des Maps pour faciliter la fusion
+    const conversationsMap = new Map();
+    const friendsMap = new Map();
+    const groupsMap = new Map();
+
+    // Fonction pour mettre à jour la liste combinée
+    const updateCombinedList = async () => {
+      const combined = new Map();
+
+      // D'abord, ajouter toutes les conversations avec leurs derniers messages
+      conversationsMap.forEach((conversation, userId) => {
+        combined.set(`user_${userId}`, {
+          ...conversation,
+          type: 'conversation'
+        });
+      });
+
+      // Ensuite, traiter les amis qui n'ont pas de conversation
+      for (const [userId, friend] of friendsMap) {
+        if (!combined.has(`user_${userId}`)) {
+          // Récupérer le dernier message pour cet ami (seulement s'il est dans friends)
+          const { lastMessage, conversationId } = await getLastMessageForFriend(userId);
+          
+          const lastMessageTime = lastMessage ? getTimestamp(lastMessage.timestamp) : 0;
+          const unreadCount = 0; // À adapter selon votre logique
+
+          combined.set(`user_${userId}`, {
+            ...friend,
+            type: lastMessage ? 'conversation' : 'friend',
+            conversationId: conversationId,
+            lastMessage: lastMessage?.text || '',
+            lastMessageTime: lastMessageTime,
+            lastMessageSender: lastMessage?.senderId,
+            hasUnreadMessages: unreadCount > 0,
+            unreadCount: unreadCount
+          });
+        } else {
+          // Mettre à jour les infos de l'ami existant dans la conversation
+          const existing = combined.get(`user_${userId}`);
+          combined.set(`user_${userId}`, {
+            ...existing,
+            name: friend.name || existing.name,
+            avatar: friend.avatar || existing.avatar,
+            isOnline: friend.isOnline
+          });
+        }
+      }
+
+      // Ajouter les groupes
+      groupsMap.forEach((group, groupId) => {
+        combined.set(`group_${groupId}`, {
+          ...group,
+          type: 'group'
+        });
+      });
+
+      // Convertir en array et trier
+      const finalList = Array.from(combined.values()).sort((a, b) => {
+        // Messages non lus en premier
+        if (a.hasUnreadMessages && !b.hasUnreadMessages) return -1;
+        if (!a.hasUnreadMessages && b.hasUnreadMessages) return 1;
+        
+        // Ensuite par timestamp (les plus récents en premier)
+        const aTime = a.lastMessageTime || 0;
+        const bTime = b.lastMessageTime || 0;
+        
+        if (aTime !== bTime) {
+          return bTime - aTime;
+        }
+        
+        // Si même timestamp, les conversations avec des messages en premier
+        if (a.type === 'conversation' && b.type === 'friend') return -1;
+        if (a.type === 'friend' && b.type === 'conversation') return 1;
+        
+        // Enfin par nom alphabétique
+        return (a.name || '').localeCompare(b.name || '');
+      });
+
+      setCombinedList(finalList);
+      setLoading(false);
+    };
+
+    // Écouter les conversations
     const unsubscribeConversations = firestore()
       .collection('conversations')
       .where('participants', 'array-contains', currentUser.uid)
       .onSnapshot(async (snapshot) => {
         try {
-          const conversationsData = await Promise.all(
+          conversationsMap.clear();
+          
+          await Promise.all(
             snapshot.docs.map(async (doc) => {
               try {
                 const data = doc.data();
                 if (!Array.isArray(data.participants) || data.participants.length < 2) {
-                  console.log('Participants invalides ou manquants pour:', doc.id, data.participants);
-                  return null;
+                  return;
                 }
 
                 const otherUserId = data.participants.find(uid => uid !== currentUser.uid);
-                if (!otherUserId) {
-                  console.log('Aucun autre utilisateur trouvé dans la conversation:', doc.id, data.participants);
-                  return null;
-                }
-
-                // Vérifier si l'utilisateur est toujours un ami
-                const friendsQuery = await firestore()
-                  .collection('friends')
-                  .where('users', 'array-contains', currentUser.uid)
-                  .get();
-
-                let isFriend = false;
-                for (const friendDoc of friendsQuery.docs) {
-                  const friendData = friendDoc.data();
-                  if (friendData.users && friendData.users.includes(otherUserId)) {
-                    isFriend = true;
-                    break;
-                  }
-                }
-
-                // Si ce n'est plus un ami, ne pas inclure cette conversation
-                if (!isFriend) {
-                  return null;
-                }
+                if (!otherUserId) return;
 
                 const userDoc = await firestore().collection('users').doc(otherUserId).get();
+                if (!userDoc.exists) return;
 
+                const userData = userDoc.data();
                 const lastMessage = {
                   text: data.lastMessage || '',
                   senderId: data.lastMessageSender || '',
                   timestamp: data.lastMessageTime || null,
                 };
                 const lastMessageTime = getTimestamp(lastMessage.timestamp);
-                const unreadCount = 0;
+                const unreadCount = 0; // À adapter selon votre logique
 
-                if (userDoc.exists) {
-                  const userData = userDoc.data();
-                  let avatarUrl = null;
-                  if (userData?.photoURL) {
-                    avatarUrl = userData.photoURL;
-                  } else if (userData?.photoProfil) {
-                    if (userData.photoProfil.startsWith('data:image')) {
-                      avatarUrl = userData.photoProfil;
-                    } else if (userData.photoProfil.startsWith('/9j/')) {
-                      avatarUrl = `data:image/jpeg;base64,${userData.photoProfil}`;
-                    } else {
-                      avatarUrl = userData.photoProfil;
-                    }
-                  } else if (userData?.avatar) {
-                    avatarUrl = userData.avatar;
-                  }
-
-                  return {
-                    id: otherUserId,
-                    conversationId: doc.id,
-                    name: userData?.nom || userData?.displayName || 'Ami',
-                    avatar: avatarUrl,
-                    isOnline: userData?.isOnline === true,
-                    isGroup: false,
-                    hasUnreadMessages: unreadCount > 0,
-                    unreadCount: unreadCount,
-                    lastMessage: lastMessage?.text || '',
-                    lastMessageTime: lastMessageTime,
-                    lastMessageSender: lastMessage?.senderId
-                  };
-                }
-
-                return null;
+                conversationsMap.set(otherUserId, {
+                  id: otherUserId,
+                  conversationId: doc.id,
+                  name: userData?.nom || userData?.displayName || 'Ami',
+                  avatar: getAvatarUrl(userData),
+                  isOnline: userData?.isOnline === true,
+                  isGroup: false,
+                  hasUnreadMessages: unreadCount > 0,
+                  unreadCount: unreadCount,
+                  lastMessage: lastMessage?.text || '',
+                  lastMessageTime: lastMessageTime,
+                  lastMessageSender: lastMessage?.senderId
+                });
               } catch (error) {
                 console.log('Erreur lors du traitement d\'une conversation:', error);
-                return null;
               }
             })
           );
-
-          setConversations(conversationsData.filter(c => c !== null));
           
+          updateCombinedList();
         } catch (error) {
           console.log('Erreur lors de la récupération des conversations:', error);
         }
       });
 
+    // Écouter les amis
     const unsubscribeFriends = firestore()
       .collection('friends')
       .where('users', 'array-contains', currentUser.uid)
       .onSnapshot(async (snapshot) => {
         try {
-          const friendsData = await Promise.all(
+          friendsMap.clear();
+          
+          await Promise.all(
             snapshot.docs.map(async (doc) => {
               try {
                 const data = doc.data();
                 const friendId = data.users?.find(uid => uid !== currentUser.uid);
                 
-                if (!friendId) return null;
+                if (!friendId) return;
 
                 const userDoc = await firestore().collection('users').doc(friendId).get();
-                if (userDoc.exists) {
-                  const userData = userDoc.data();
-                  let avatarUrl = null;
-                  if (userData?.photoURL) {
-                    avatarUrl = userData.photoURL;
-                  } else if (userData?.photoProfil) {
-                    if (userData.photoProfil.startsWith('data:image')) {
-                      avatarUrl = userData.photoProfil;
-                    } else if (userData.photoProfil.startsWith('/9j/')) {
-                      avatarUrl = `data:image/jpeg;base64,${userData.photoProfil}`;
-                    } else {
-                      avatarUrl = userData.photoProfil;
-                    }
-                  } else if (userData?.avatar) {
-                    avatarUrl = userData.avatar;
-                  }
+                if (!userDoc.exists) return;
 
-                  return {
-                    id: friendId,
-                    name: userData?.nom || userData?.displayName || 'Ami',
-                    avatar: avatarUrl,
-                    isOnline: userData?.isOnline || false,
-                    isGroup: false,
-                    hasUnreadMessages: false,
-                    unreadCount: 0,
-                    lastMessage: '',
-                    lastMessageTime: 0
-                  };
-                }
-                return null;
+                const userData = userDoc.data();
+                
+                friendsMap.set(friendId, {
+                  id: friendId,
+                  name: userData?.nom || userData?.displayName || 'Ami',
+                  avatar: getAvatarUrl(userData),
+                  isOnline: userData?.isOnline || false,
+                  isGroup: false
+                });
               } catch (error) {
                 console.log('Erreur lors du traitement d\'un ami:', error);
-                return null;
               }
             })
           );
-          setFriends(friendsData.filter(f => f !== null));
-          setLoading(false);
+          
+          updateCombinedList();
         } catch (error) {
           console.log('Erreur lors de la récupération des amis:', error);
-          setLoading(false);
         }
       });
 
+    // Écouter les groupes
     const unsubscribeGroups = firestore()
       .collection('groups')
       .where('members', 'array-contains', currentUser.uid)
       .onSnapshot(async (snapshot) => {
         try {
-          const groupData = await Promise.all(
+          groupsMap.clear();
+          
+          await Promise.all(
             snapshot.docs.map(async (doc) => {
               try {
                 const data = doc.data();
@@ -313,7 +328,7 @@ const ChatList = () => {
                 const lastMessageTime = getTimestamp(lastMessage.timestamp);
                 const unreadCount = 0;
 
-                return {
+                groupsMap.set(doc.id, {
                   id: doc.id,
                   name: data.name || 'Groupe',
                   avatar: data.avatar || null,
@@ -323,14 +338,14 @@ const ChatList = () => {
                   lastMessage: lastMessage?.text || '',
                   lastMessageTime: lastMessageTime,
                   lastMessageSender: lastMessage?.senderId
-                };
+                });
               } catch (error) {
                 console.log('Erreur lors du traitement d\'un groupe:', error);
-                return null;
               }
             })
           );
-          setGroups(groupData.filter(g => g !== null));
+          
+          updateCombinedList();
         } catch (error) {
           console.log('Erreur lors de la récupération des groupes:', error);
         }
@@ -343,6 +358,10 @@ const ChatList = () => {
     };
   }, [currentUser?.uid]);
 
+  const goToCreateGroup = () => {
+    navigation.navigate('CreateGroup');
+  };
+
   const startChat = (friend) => {
     navigation.navigate('Chat2p', {
       recipientId: friend.id,
@@ -353,7 +372,7 @@ const ChatList = () => {
   };
 
   const formatLastMessageTime = (timestamp) => {
-    if (!timestamp|| timestamp === 0) return '';
+    if (!timestamp || timestamp === 0) return '';
     
     try {
       const now = new Date();
@@ -399,11 +418,6 @@ const ChatList = () => {
           });
         } else {
           startChat(item);
-        }
-      }}
-      onLongPress={() => {
-        if (!item.isGroup) {
-          deleteFriend(item.id, item.name);
         }
       }}
     >
@@ -457,10 +471,8 @@ const ChatList = () => {
             {item.lastMessage
               ? (item.lastMessageSender === currentUser.uid
                   ? `Vous: ${item.lastMessage}`
-                  : item.isGroup
-                    ? item.lastMessage
-                    : item.lastMessage)
-              : ''
+                  : item.lastMessage)
+              : 'Commencer une conversation'
             }
           </Text>
         </View>
@@ -475,15 +487,6 @@ const ChatList = () => {
         {item.hasUnreadMessages && (
           <View style={styles.newMessageIndicator} />
         )}
-        {/* {!item.isGroup && (
-          <TouchableOpacity
-            style={styles.deleteButton}
-            onPress={() => deleteFriend(item.id, item.name)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Icon name="trash-outline" size={16} color="#FF6B6B" />
-          </TouchableOpacity>
-        )} */}
       </View>
     </TouchableOpacity>
   );
@@ -516,7 +519,7 @@ const ChatList = () => {
       <FlatList
         data={combinedList}
         renderItem={renderItem}
-        keyExtractor={(item, index) => item.id || index.toString()}
+        keyExtractor={(item, index) => `${item.type}-${item.id}` || index.toString()}
         contentContainerStyle={combinedList.length === 0 ? styles.emptyContainer : null}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
@@ -685,10 +688,6 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#1E90FF',
     marginTop: 4,
-  },
-  deleteButton: {
-    marginTop: 4,
-    padding: 4,
   },
   emptyContainer: {
     flex: 1,
