@@ -10,10 +10,54 @@ export default function Home({ navigation }) {
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+const [searchResults, setSearchResults] = useState([]);
+const [refreshing, setRefreshing] = useState(false);
 
   const openNote = (note) => {
     navigation.navigate('AfficherNotes', { note, fromHome: true });
   };
+
+  const handleRefresh = async () => {
+  setRefreshing(true);
+
+  try {
+    const snapshot = await firestore()
+      .collection('notes')
+      .where('visibility', '==', 'public')
+      .get();
+
+    let fetchedNotes = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    const enrichedNotes = await Promise.all(
+      fetchedNotes.map(async (note) => {
+        if (note.userId) {
+          try {
+            const userDoc = await firestore().collection('users').doc(note.userId).get();
+            const userData = userDoc.data();
+            return {
+              ...note,
+              photoProfil: userData?.photoProfil || null,
+              userName: userData?.nom || "Utilisateur inconnu",
+            };
+          } catch (err) {
+            console.error('Erreur récupération profil:', err);
+          }
+        }
+        return note;
+      })
+    );
+
+    setNotes(enrichedNotes.sort(() => 0.5 - Math.random()));
+  } catch (error) {
+    console.error("Erreur lors du rafraîchissement :", error);
+    Alert.alert("Erreur", "Impossible de rafraîchir les notes.");
+  }
+
+  setRefreshing(false);
+};
 
   const handleLogout = async () => {
     try {
@@ -64,7 +108,19 @@ useEffect(() => {
 
   return () => unsubscribe();
 }, []);
-
+// Fonction de recherche améliorée
+  useEffect(() => {
+    if (searchQuery.trim() === '') {
+      setSearchResults(notes);
+    } else {
+      const results = notes.filter(note => 
+        note.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        note.leçon?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        note.userName?.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+      setSearchResults(results);
+    }
+  }, [searchQuery, notes]);
   const renderItem = ({ item }) => {
     const currentUser = auth().currentUser;
     const hasLiked = item.likes?.includes(currentUser?.uid);
@@ -169,14 +225,18 @@ useEffect(() => {
   );
 
   return (
-    <View style={styles.container}>
-      <TextInput
-        placeholder="Trouver le titre de la note"
-        placeholderTextColor="#999"
-        style={styles.input}
-        value={searchQuery}
-        onChangeText={setSearchQuery}
-      />
+     <View style={styles.container}>
+      <View style={styles.searchContainer}>
+        <Icon name="search-outline" size={20} color="#999" style={styles.searchIcon} />
+        <TextInput
+          placeholder="Rechercher note public disponible"
+          placeholderTextColor="#999"
+          style={styles.input}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          clearButtonMode="while-editing"
+        />
+      </View>
 
       {loading ? (
         <ActivityIndicator size="large" color="#3B82F6" />
@@ -186,22 +246,24 @@ useEffect(() => {
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
+           refreshing={refreshing}
+  onRefresh={handleRefresh}
         />
       ) : (
         <View style={styles.emptyContainer}>
           <Text style={styles.emptyText}>Aucune note publique disponible</Text>
         </View>
       )}
-
+ <TouchableOpacity style={styles.chatButton} onPress={() => navigation.navigate('Chatboot')}>
+        <Icon name="chatbox-outline" size={30} color="#777" />
+      </TouchableOpacity>
       <TouchableOpacity
         style={styles.logoutButton}
         onPress={handleLogout}
       >
-        <Text style={styles.logoutText}>تسجيل الخروج</Text>
+         <Icon name="log-out-outline" size={24} color="#fff" />
       </TouchableOpacity>
-      <TouchableOpacity style={styles.chatButton} onPress={() => navigation.navigate('Chatboot')}>
-        <Icon name="chatbox" size={30} color="#777" />
-      </TouchableOpacity>
+     
     </View>
   );
 }
@@ -212,23 +274,57 @@ const styles = StyleSheet.create({
     padding: 20,
     backgroundColor: '#FFFFFF',
   },
+  chatButton: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    backgroundColor: '#1E90FF',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#555',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 5,
+  },
   input: {
-    backgroundColor: '#E0FFFF',
-    borderRadius: 15,
-    padding: 15,
-    marginVertical: 8,
-    borderColor: '#3B82F6',
-    borderWidth: 1,
+    flex: 1,
+    paddingVertical: 15,
     color: '#000',
     fontSize: 14,
   },
-  logoutButton: {
-    backgroundColor: '#3B82F6',
-    borderRadius: 25,
-    padding: 15,
-    marginTop: 20,
+  searchContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#E0FFFF',
+    borderRadius: 15,
+    paddingHorizontal: 15,
+    marginVertical: 8,
+    borderColor: '#3B82F6',
+    borderWidth: 1,
+  },
+  searchIcon: {
+    marginRight: 10,
+  },
+  logoutButton: {
+    position: 'absolute',
+    left: 20,
+    bottom: 20,
+    backgroundColor: '#1E90FF',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#555',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 5,
+
   },
   logoutText: {
     color: '#FFFFFF',

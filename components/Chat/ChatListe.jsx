@@ -7,7 +7,8 @@ import {
   StyleSheet, 
   Image,
   StatusBar,
-  Platform
+  Platform,
+  Alert
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import auth from '@react-native-firebase/auth';
@@ -45,10 +46,84 @@ const ChatList = () => {
     }
   };
 
+  // Fonction pour supprimer un ami
+  const deleteFriend = async (friendId, friendName) => {
+    Alert.alert(
+      "Supprimer l'ami",
+      `Êtes-vous sûr de vouloir supprimer ${friendName} de votre liste d'amis ?`,
+      [
+        {
+          text: "Annuler",
+          style: "cancel"
+        },
+        {
+          text: "Supprimer",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              // Trouver et supprimer la relation d'amitié dans la collection friends
+              const friendsQuery = await firestore()
+                .collection('friends')
+                .where('users', 'array-contains', currentUser.uid)
+                .get();
+
+              for (const doc of friendsQuery.docs) {
+                const data = doc.data();
+                if (data.users && data.users.includes(friendId)) {
+                  await firestore().collection('friends').doc(doc.id).delete();
+                  break;
+                }
+              }
+
+              // Optionnel : Supprimer aussi la conversation privée
+              const conversationsQuery = await firestore()
+                .collection('conversations')
+                .where('participants', 'array-contains', currentUser.uid)
+                .get();
+
+              for (const doc of conversationsQuery.docs) {
+                const data = doc.data();
+                if (data.participants && 
+                    data.participants.includes(friendId) && 
+                    data.participants.length === 2) {
+                  await firestore().collection('conversations').doc(doc.id).delete();
+                  break;
+                }
+              }
+
+              Alert.alert("Succès", `${friendName} a été supprimé de votre liste d'amis.`);
+            } catch (error) {
+              console.log('Erreur lors de la suppression de l\'ami:', error);
+              Alert.alert("Erreur", "Impossible de supprimer cet ami. Veuillez réessayer.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  // Filtrer pour ne garder que les utilisateurs qui sont dans la collection friends
   const combinedList = [...groups, ...friends, ...conversations]
-    .filter((item, index, self) => 
-      index === self.findIndex(t => t.id === item.id)
-    )
+    .filter((item, index, self) => {
+      // Supprimer les doublons
+      const isUnique = index === self.findIndex(t => t.id === item.id);
+      
+      // Pour les conversations individuelles, vérifier qu'ils sont amis
+      if (!item.isGroup && !item.conversationId) {
+        // Si c'est un ami direct de la collection friends, on le garde
+        return isUnique;
+      }
+      
+      // Pour les conversations, vérifier qu'ils sont toujours amis
+      if (!item.isGroup && item.conversationId) {
+        // Vérifier si l'utilisateur est toujours dans la liste d'amis
+        const isFriend = friends.some(friend => friend.id === item.id);
+        return isUnique && isFriend;
+      }
+      
+      // Pour les groupes, toujours garder
+      return isUnique;
+    })
     .sort((a, b) => {
       if (a.hasUnreadMessages && !b.hasUnreadMessages) return -1;
       if (!a.hasUnreadMessages && b.hasUnreadMessages) return 1;
@@ -74,29 +149,53 @@ const ChatList = () => {
             snapshot.docs.map(async (doc) => {
               try {
                 const data = doc.data();
-                const otherUserId = data.participants?.find(uid => uid !== currentUser.uid);
-                
-                if (!otherUserId) return null;
+                if (!Array.isArray(data.participants) || data.participants.length < 2) {
+                  console.log('Participants invalides ou manquants pour:', doc.id, data.participants);
+                  return null;
+                }
+
+                const otherUserId = data.participants.find(uid => uid !== currentUser.uid);
+                if (!otherUserId) {
+                  console.log('Aucun autre utilisateur trouvé dans la conversation:', doc.id, data.participants);
+                  return null;
+                }
+
+                // Vérifier si l'utilisateur est toujours un ami
+                const friendsQuery = await firestore()
+                  .collection('friends')
+                  .where('users', 'array-contains', currentUser.uid)
+                  .get();
+
+                let isFriend = false;
+                for (const friendDoc of friendsQuery.docs) {
+                  const friendData = friendDoc.data();
+                  if (friendData.users && friendData.users.includes(otherUserId)) {
+                    isFriend = true;
+                    break;
+                  }
+                }
+
+                // Si ce n'est plus un ami, ne pas inclure cette conversation
+                if (!isFriend) {
+                  return null;
+                }
 
                 const userDoc = await firestore().collection('users').doc(otherUserId).get();
-                
-                const messages = data.messages || [];
-                const unreadCount = messages.filter(msg => 
-                  msg.senderId !== currentUser.uid && 
-                  (!msg.readBy || !msg.readBy.includes(currentUser.uid))
-                ).length;
 
-                const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-                const lastMessageTime = lastMessage ? getTimestamp(lastMessage.timestamp) : 0;
+                const lastMessage = {
+                  text: data.lastMessage || '',
+                  senderId: data.lastMessageSender || '',
+                  timestamp: data.lastMessageTime || null,
+                };
+                const lastMessageTime = getTimestamp(lastMessage.timestamp);
+                const unreadCount = 0;
 
                 if (userDoc.exists) {
                   const userData = userDoc.data();
-                  // Vérification améliorée de l'avatar
                   let avatarUrl = null;
                   if (userData?.photoURL) {
                     avatarUrl = userData.photoURL;
                   } else if (userData?.photoProfil) {
-                    // Si photoProfil est une string base64
                     if (userData.photoProfil.startsWith('data:image')) {
                       avatarUrl = userData.photoProfil;
                     } else if (userData.photoProfil.startsWith('/9j/')) {
@@ -113,7 +212,7 @@ const ChatList = () => {
                     conversationId: doc.id,
                     name: userData?.nom || userData?.displayName || 'Ami',
                     avatar: avatarUrl,
-                    isOnline: userData?.isOnline || false,
+                    isOnline: userData?.isOnline === true,
                     isGroup: false,
                     hasUnreadMessages: unreadCount > 0,
                     unreadCount: unreadCount,
@@ -122,6 +221,7 @@ const ChatList = () => {
                     lastMessageSender: lastMessage?.senderId
                   };
                 }
+
                 return null;
               } catch (error) {
                 console.log('Erreur lors du traitement d\'une conversation:', error);
@@ -129,7 +229,9 @@ const ChatList = () => {
               }
             })
           );
+
           setConversations(conversationsData.filter(c => c !== null));
+          
         } catch (error) {
           console.log('Erreur lors de la récupération des conversations:', error);
         }
@@ -151,7 +253,6 @@ const ChatList = () => {
                 const userDoc = await firestore().collection('users').doc(friendId).get();
                 if (userDoc.exists) {
                   const userData = userDoc.data();
-                  // Même vérification améliorée pour les amis
                   let avatarUrl = null;
                   if (userData?.photoURL) {
                     avatarUrl = userData.photoURL;
@@ -204,14 +305,13 @@ const ChatList = () => {
               try {
                 const data = doc.data();
                 
-                const messages = data.messages || [];
-                const unreadCount = messages.filter(msg => 
-                  msg.senderId !== currentUser.uid && 
-                  (!msg.readBy || !msg.readBy.includes(currentUser.uid))
-                ).length;
-
-                const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-                const lastMessageTime = lastMessage ? getTimestamp(lastMessage.timestamp) : 0;
+                const lastMessage = {
+                  text: data.lastMessage || '',
+                  senderId: data.lastMessageSender || '',
+                  timestamp: data.lastMessageTime || null,
+                };
+                const lastMessageTime = getTimestamp(lastMessage.timestamp);
+                const unreadCount = 0;
 
                 return {
                   id: doc.id,
@@ -253,7 +353,7 @@ const ChatList = () => {
   };
 
   const formatLastMessageTime = (timestamp) => {
-    if (!timestamp) return '';
+    if (!timestamp|| timestamp === 0) return '';
     
     try {
       const now = new Date();
@@ -301,6 +401,11 @@ const ChatList = () => {
           startChat(item);
         }
       }}
+      onLongPress={() => {
+        if (!item.isGroup) {
+          deleteFriend(item.id, item.name);
+        }
+      }}
     >
       <View style={styles.avatarContainer}>
         {item.avatar ? (
@@ -309,7 +414,6 @@ const ChatList = () => {
             style={styles.avatar}
             onError={(e) => {
               console.log("Erreur de chargement de l'avatar:", e.nativeEvent.error);
-              // Vous pourriez ici mettre à jour l'état pour afficher l'avatar par défaut
             }}
             resizeMode="cover"
           />
@@ -320,9 +424,7 @@ const ChatList = () => {
             </Text>
           </View>
         )}
-        {!item.isGroup && (
-          <View style={item.isOnline ? styles.onlineBadge : styles.offlineBadge} />
-        )}
+        
         {item.hasUnreadMessages && item.unreadCount > 0 && (
           <View style={styles.unreadBadge}>
             <Text style={styles.unreadBadgeText}>
@@ -352,9 +454,13 @@ const ChatList = () => {
             styles.friendStatus,
             item.hasUnreadMessages && styles.unreadMessage
           ]} numberOfLines={1}>
-            {item.lastMessage ? 
-              (item.lastMessageSender === currentUser.uid ? 'Vous: ' : '') + item.lastMessage :
-              item.isGroup ? 'Groupe' : (item.isOnline ? 'En ligne' : 'Hors ligne')
+            {item.lastMessage
+              ? (item.lastMessageSender === currentUser.uid
+                  ? `Vous: ${item.lastMessage}`
+                  : item.isGroup
+                    ? item.lastMessage
+                    : item.lastMessage)
+              : ''
             }
           </Text>
         </View>
@@ -368,6 +474,15 @@ const ChatList = () => {
         />
         {item.hasUnreadMessages && (
           <View style={styles.newMessageIndicator} />
+        )}
+        {!item.isGroup && (
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={() => deleteFriend(item.id, item.name)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Icon name="trash-outline" size={16} color="#FF6B6B" />
+          </TouchableOpacity>
         )}
       </View>
     </TouchableOpacity>
@@ -547,11 +662,13 @@ const styles = StyleSheet.create({
   messagePreviewContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: 20,
   },
   friendStatus: {
     fontSize: 14,
     color: '#666',
     flex: 1,
+    opacity: 1,
   },
   unreadMessage: {
     fontWeight: '600',
@@ -568,6 +685,10 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#1E90FF',
     marginTop: 4,
+  },
+  deleteButton: {
+    marginTop: 4,
+    padding: 4,
   },
   emptyContainer: {
     flex: 1,

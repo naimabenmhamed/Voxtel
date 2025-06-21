@@ -141,7 +141,7 @@ export default function AfficherNotes({ route, navigation }) {
       <Text style={styles.text}>{note.title}</Text>
 
       <Text style={styles.label}>Leçon</Text>
-      <Text style={styles.text}>{note.leçon || 'Aucun Leçon'}</Text>
+      <Text style={styles.text}>{note.lecon || note.leçon || 'Aucun Leçon'}</Text>
 
       {isOwner && note.visibility !== 'public' && (
         <TouchableOpacity style={styles.button} onPress={handlePublish}>

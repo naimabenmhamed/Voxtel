@@ -33,7 +33,7 @@ export const saveNotes= (route, navigation) => {
        // Mode édition - charger les données existantes
        setIdToUpdate(route.params.id);
        setTitle(route.params.title || '');
-       setLeçon(route.params.description || '');
+       setLeçon(route.params.leçon || '');
       //  setIngredient(route.params.ingredient || '');
      } else {
        // Mode création - réinitialiser

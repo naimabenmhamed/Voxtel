@@ -18,12 +18,13 @@ export const uploadAudio = async (audioPath) => {
   });
 
   try {
-    const response = await axios.post('https://shad-funny-ultimately.ngrok-free.app', formData, {
+    const response = await axios.post('http://192.168.0.137:8000', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
         Accept: 'application/json',
       },
       timeout: 30000,
+      
     });
 
     console.log('Transcription response:', response.data);
