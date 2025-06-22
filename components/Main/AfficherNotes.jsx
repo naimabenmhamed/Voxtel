@@ -116,7 +116,8 @@ export default function AfficherNotes({ route, navigation }) {
       reader.onload = async () => {
         const base64data = reader.result.split(',')[1];
         const filename = `${cleanFilename(note.title)}_${Date.now()}.pdf`;
-        const path = RNFS.DownloadDirectoryPath + '/' + filename;
+        const path = `${RNFS.DownloadDirectoryPath}/${filename}`;
+       
 
         await RNFS.writeFile(path, base64data, 'base64');
         Alert.alert('Succès', `PDF enregistré sous : ${filename}`);
