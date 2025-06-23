@@ -59,46 +59,70 @@ const GroupChat = ({ route, navigation }) => {
   };
 
   // Fonction pour partager une note dans le groupe
-  const shareNote = async (note) => {
-    try {
-      await Firestore()
-        .collection('groups')
-        .doc(groupId)
-        .collection('messages')
-        .add({
-          text: `📝 Note partagée: ${note.title}`,
-          senderId: currentUser.uid,
-          senderName: currentUser.displayName || 'Utilisateur',
-          createdAt: Firestore.FieldValue.serverTimestamp(),
-          messageType: 'shared_note',
-          sharedNote: {
-            id: note.id,
-            title: note.title,
-            description: note.description,
-            createdAt: note.createdAt,
-            visibility: note.visibility,
-            sharedBy: currentUser.uid,
-            sharedByName: currentUser.displayName || 'Utilisateur'
-          }
-        });
-
-      // Mettre à jour le dernier message du groupe
-      await Firestore()
-        .collection('groups')
-        .doc(groupId)
-        .update({
-          lastMessage: `📝 Note partagée: ${note.title}`,
-          lastMessageSender: currentUser.uid,
-          updatedAt: Firestore.FieldValue.serverTimestamp()
-        });
-
-      setShowNotesModal(false);
-      Alert.alert("Succès", "Note partagée avec succès dans le groupe!");
-    } catch (error) {
-      console.error("Erreur lors du partage:", error);
-      Alert.alert("Erreur", "Impossible de partager la note");
+  // Fonction pour partager une note dans le groupe - VERSION CORRIGEE
+const shareNote = async (note) => {
+  try {
+    // Vérifier que la note existe et a les champs requis
+    if (!note || !note.id || !note.title) {
+      throw new Error("Note invalide - certains champs requis sont manquants");
     }
-  };
+
+    // Préparer l'objet de la note partagée avec des valeurs par défaut pour éviter undefined
+    const sharedNoteData = {
+      id: note.id,
+      title: note.title || "Sans titre",
+      leçon: note.leçon || "",
+      createdAt: note.createdAt || Firestore.FieldValue.serverTimestamp(),
+      visibility: note.visibility || "private",
+      sharedBy: currentUser.uid,
+      sharedByName: currentUser.displayName || 'Utilisateur',
+      // Ajouter d'autres champs avec des valeurs par défaut si nécessaire
+      ingredient: note.ingredient || "",
+      image: note.image || null
+    };
+
+    // Vérifier que tous les champs ont des valeurs valides
+    Object.keys(sharedNoteData).forEach(key => {
+      if (sharedNoteData[key] === undefined) {
+        sharedNoteData[key] = null; // Remplacer undefined par null
+      }
+    });
+
+    await Firestore()
+      .collection('groups')
+      .doc(groupId)
+      .collection('messages')
+      .add({
+        text: `📝 Note partagée: ${sharedNoteData.title}`,
+        senderId: currentUser.uid,
+        senderName: currentUser.displayName || 'Utilisateur',
+        createdAt: Firestore.FieldValue.serverTimestamp(),
+        messageType: 'shared_note',
+        sharedNote: sharedNoteData,
+        readBy: [currentUser.uid] // Ajouter l'utilisateur courant comme ayant lu le message
+      });
+
+    // Mettre à jour le dernier message du groupe
+    await Firestore()
+      .collection('groups')
+      .doc(groupId)
+      .update({
+        lastMessage: `📝 Note partagée: ${sharedNoteData.title}`,
+        lastMessageSender: currentUser.uid,
+        updatedAt: Firestore.FieldValue.serverTimestamp()
+      });
+
+    setShowNotesModal(false);
+    Alert.alert("Succès", "Note partagée avec succès dans le groupe!");
+  } catch (error) {
+    console.error("Erreur lors du partage:", error);
+    Alert.alert(
+      "Erreur", 
+      error.message || "Impossible de partager la note",
+      [{ text: "OK" }]
+    );
+  }
+};
 
   const markMessagesAsRead = async () => {
     const messagesRef = Firestore()
@@ -216,8 +240,7 @@ const GroupChat = ({ route, navigation }) => {
               note: {
                 id: sharedNote.id,
                 title: sharedNote.title,
-                description: sharedNote.description,
-                ingredient: sharedNote.ingredient || '',
+                 leçon: sharedNote.leçon || '',
                 createdAt: sharedNote.createdAt,
                 visibility: sharedNote.visibility,
                 image: sharedNote.image || null,

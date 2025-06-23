@@ -27,12 +27,12 @@ def chat(message: Message):
     elif user_input == 3:
         return {"response": "Ajoutez vos notes, leur contenu et leur titre, ou bien annulez. Indiquez également si elles sont publiques ou privées."}
     elif user_input == 4:  
-        return{"response":"le profil de l'utlisateur qui contient aussi ,choisi un nombre:/n 11)home /n 22)profil /n 33)🗨️"} 
+        return{"response":"le profil de l'utlisateur qui contient aussi ,choisi un nombre:/n 11)Privès /n 22)Publics/n 33)🗨️"} 
     elif  user_input == 11:
-        return{"response":"Les notes de l’utilisateur peuvent être résumées, décrites, exportées en PDF ou ZIP, supprimées ou modifiées. Elles contiennent également la date d’ajout."}    
+        return{"response":"Les notes de l’utilisateur peuvent être résumées, décrites, exportées en PDF , supprimées ou modifiées. Elles contiennent également la date d’ajout."}    
     elif user_input == 22:
-        return{"response":"none"}  
+        return{"response":"Les notes publiées par l’utilisateur. "}  
     elif user_input == 33:  
-        return{"response":"chercher a des amis a l'aide de leur nome et le contacter "}  
+        return{"response":"Rechercher des amis à l’aide de leur nom, les contacter, créer des groupes, et partager des notes entre eux."}  
     else :
         return{"response":"ce choix n'exicte pas"} 

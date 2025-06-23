@@ -106,7 +106,7 @@ export default function App() {
           component={CreatAccont}
           options={{ headerShown: false }}
         />
-        <Stack.Screen name="Login" component={Login} />
+        <Stack.Screen name="Login" component={Login} options={{ headerShown: false }}/>
         <Stack.Screen name="Home" component={TabNav} options={{ headerShown: false }} />
         <Stack.Screen name="Add" component={Add} options={{ headerShown: false }} />
         <Stack.Screen name="Explore" component={Explore} options={{ headerShown: false }} />

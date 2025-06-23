@@ -15,12 +15,10 @@ import firestore from '@react-native-firebase/firestore';
 import { useNavigation } from '@react-navigation/native';
 
 const ChatList = () => {
-  const [friends, setFriends] = useState([]);
+  const [combinedList, setCombinedList] = useState([]);
   const [loading, setLoading] = useState(true);
   const navigation = useNavigation();
   const currentUser = auth().currentUser;
-  const [groups, setGroups] = useState([]);
-  const [conversations, setConversations] = useState([]);
 
   const getTimestamp = (timestamp) => {
     if (!timestamp) return 0;
@@ -45,175 +43,292 @@ const ChatList = () => {
     }
   };
 
-  const combinedList = [...groups, ...friends, ...conversations]
-    .filter((item, index, self) => 
-      index === self.findIndex(t => t.id === item.id)
-    )
-    .sort((a, b) => {
-      if (a.hasUnreadMessages && !b.hasUnreadMessages) return -1;
-      if (!a.hasUnreadMessages && b.hasUnreadMessages) return 1;
-      
-      const aTime = a.lastMessageTime || 0;
-      const bTime = b.lastMessageTime || 0;
-      return bTime - aTime;
-    });
+  const getAvatarUrl = (userData) => {
+    if (userData?.photoURL) {
+      return userData.photoURL;
+    } else if (userData?.photoProfil) {
+      if (userData.photoProfil.startsWith('data:image')) {
+        return userData.photoProfil;
+      } else if (userData.photoProfil.startsWith('/9j/')) {
+        return `data:image/jpeg;base64,${userData.photoProfil}`;
+      } else {
+        return userData.photoProfil;
+      }
+    } else if (userData?.avatar) {
+      return userData.avatar;
+    }
+    return null;
+  };
 
-  const goToCreateGroup = () => {
-    navigation.navigate('CreateGroup');
+  // Nouvelle fonction pour récupérer le dernier message d'une conversation avec un ami
+  const getLastMessageForFriend = async (friendId) => {
+    try {
+      // Vérifier d'abord si cet utilisateur est bien dans la collection friends
+      const friendQuery = await firestore()
+        .collection('friends')
+        .where('users', 'array-contains', currentUser.uid)
+        .get();
+
+      let isFriend = false;
+      for (const doc of friendQuery.docs) {
+        const data = doc.data();
+        if (data.users && data.users.includes(friendId)) {
+          isFriend = true;
+          break;
+        }
+      }
+
+      // Si ce n'est pas un ami, ne pas récupérer le message
+      if (!isFriend) {
+        return { lastMessage: null, conversationId: null };
+      }
+
+      // Chercher une conversation entre l'utilisateur actuel et cet ami
+      const conversationQuery = await firestore()
+        .collection('conversations')
+        .where('participants', 'array-contains', currentUser.uid)
+        .get();
+
+      let lastMessage = null;
+      let conversationId = null;
+
+      for (const doc of conversationQuery.docs) {
+        const data = doc.data();
+        if (data.participants && data.participants.includes(friendId)) {
+          conversationId = doc.id;
+          
+          // Récupérer le dernier message de cette conversation
+          const messagesQuery = await firestore()
+            .collection('conversations')
+            .doc(doc.id)
+            .collection('messages')
+            .orderBy('timestamp', 'desc')
+            .limit(1)
+            .get();
+
+          if (!messagesQuery.empty) {
+            const messageDoc = messagesQuery.docs[0];
+            const messageData = messageDoc.data();
+            lastMessage = {
+              text: messageData.text || '',
+              senderId: messageData.senderId || '',
+              timestamp: messageData.timestamp || null,
+            };
+          }
+          break;
+        }
+      }
+
+      return { lastMessage, conversationId };
+    } catch (error) {
+      console.log('Erreur lors de la récupération du dernier message:', error);
+      return { lastMessage: null, conversationId: null };
+    }
   };
 
   useEffect(() => {
     if (!currentUser) return;
 
+    // Stocker toutes les données dans des Maps pour faciliter la fusion
+    const conversationsMap = new Map();
+    const friendsMap = new Map();
+    const groupsMap = new Map();
+
+    // Fonction pour mettre à jour la liste combinée
+    const updateCombinedList = async () => {
+      const combined = new Map();
+
+      // D'abord, ajouter toutes les conversations avec leurs derniers messages
+      conversationsMap.forEach((conversation, userId) => {
+        combined.set(`user_${userId}`, {
+          ...conversation,
+          type: 'conversation'
+        });
+      });
+
+      // Ensuite, traiter les amis qui n'ont pas de conversation
+      for (const [userId, friend] of friendsMap) {
+        if (!combined.has(`user_${userId}`)) {
+          // Récupérer le dernier message pour cet ami (seulement s'il est dans friends)
+          const { lastMessage, conversationId } = await getLastMessageForFriend(userId);
+          
+          const lastMessageTime = lastMessage ? getTimestamp(lastMessage.timestamp) : 0;
+          const unreadCount = 0; // À adapter selon votre logique
+
+          combined.set(`user_${userId}`, {
+            ...friend,
+            type: lastMessage ? 'conversation' : 'friend',
+            conversationId: conversationId,
+            lastMessage: lastMessage?.text || '',
+            lastMessageTime: lastMessageTime,
+            lastMessageSender: lastMessage?.senderId,
+            hasUnreadMessages: unreadCount > 0,
+            unreadCount: unreadCount
+          });
+        } else {
+          // Mettre à jour les infos de l'ami existant dans la conversation
+          const existing = combined.get(`user_${userId}`);
+          combined.set(`user_${userId}`, {
+            ...existing,
+            name: friend.name || existing.name,
+            avatar: friend.avatar || existing.avatar,
+            isOnline: friend.isOnline
+          });
+        }
+      }
+
+      // Ajouter les groupes
+      groupsMap.forEach((group, groupId) => {
+        combined.set(`group_${groupId}`, {
+          ...group,
+          type: 'group'
+        });
+      });
+
+      // Convertir en array et trier
+      const finalList = Array.from(combined.values()).sort((a, b) => {
+        // Messages non lus en premier
+        if (a.hasUnreadMessages && !b.hasUnreadMessages) return -1;
+        if (!a.hasUnreadMessages && b.hasUnreadMessages) return 1;
+        
+        // Ensuite par timestamp (les plus récents en premier)
+        const aTime = a.lastMessageTime || 0;
+        const bTime = b.lastMessageTime || 0;
+        
+        if (aTime !== bTime) {
+          return bTime - aTime;
+        }
+        
+        // Si même timestamp, les conversations avec des messages en premier
+        if (a.type === 'conversation' && b.type === 'friend') return -1;
+        if (a.type === 'friend' && b.type === 'conversation') return 1;
+        
+        // Enfin par nom alphabétique
+        return (a.name || '').localeCompare(b.name || '');
+      });
+
+      setCombinedList(finalList);
+      setLoading(false);
+    };
+
+    // Écouter les conversations
     const unsubscribeConversations = firestore()
       .collection('conversations')
       .where('participants', 'array-contains', currentUser.uid)
       .onSnapshot(async (snapshot) => {
         try {
-          const conversationsData = await Promise.all(
+          conversationsMap.clear();
+          
+          await Promise.all(
             snapshot.docs.map(async (doc) => {
               try {
                 const data = doc.data();
-                const otherUserId = data.participants?.find(uid => uid !== currentUser.uid);
-                
-                if (!otherUserId) return null;
+                if (!Array.isArray(data.participants) || data.participants.length < 2) {
+                  return;
+                }
+
+                const otherUserId = data.participants.find(uid => uid !== currentUser.uid);
+                if (!otherUserId) return;
 
                 const userDoc = await firestore().collection('users').doc(otherUserId).get();
-                
-                const messages = data.messages || [];
-                const unreadCount = messages.filter(msg => 
-                  msg.senderId !== currentUser.uid && 
-                  (!msg.readBy || !msg.readBy.includes(currentUser.uid))
-                ).length;
+                if (!userDoc.exists) return;
 
-                const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-                const lastMessageTime = lastMessage ? getTimestamp(lastMessage.timestamp) : 0;
+                const userData = userDoc.data();
+                const lastMessage = {
+                  text: data.lastMessage || '',
+                  senderId: data.lastMessageSender || '',
+                  timestamp: data.lastMessageTime || null,
+                };
+                const lastMessageTime = getTimestamp(lastMessage.timestamp);
+                const unreadCount = 0; // À adapter selon votre logique
 
-                if (userDoc.exists) {
-                  const userData = userDoc.data();
-                  // Vérification améliorée de l'avatar
-                  let avatarUrl = null;
-                  if (userData?.photoURL) {
-                    avatarUrl = userData.photoURL;
-                  } else if (userData?.photoProfil) {
-                    // Si photoProfil est une string base64
-                    if (userData.photoProfil.startsWith('data:image')) {
-                      avatarUrl = userData.photoProfil;
-                    } else if (userData.photoProfil.startsWith('/9j/')) {
-                      avatarUrl = `data:image/jpeg;base64,${userData.photoProfil}`;
-                    } else {
-                      avatarUrl = userData.photoProfil;
-                    }
-                  } else if (userData?.avatar) {
-                    avatarUrl = userData.avatar;
-                  }
-
-                  return {
-                    id: otherUserId,
-                    conversationId: doc.id,
-                    name: userData?.nom || userData?.displayName || 'Ami',
-                    avatar: avatarUrl,
-                    isOnline: userData?.isOnline || false,
-                    isGroup: false,
-                    hasUnreadMessages: unreadCount > 0,
-                    unreadCount: unreadCount,
-                    lastMessage: lastMessage?.text || '',
-                    lastMessageTime: lastMessageTime,
-                    lastMessageSender: lastMessage?.senderId
-                  };
-                }
-                return null;
+                conversationsMap.set(otherUserId, {
+                  id: otherUserId,
+                  conversationId: doc.id,
+                  name: userData?.nom || userData?.displayName || 'Ami',
+                  avatar: getAvatarUrl(userData),
+                  isOnline: userData?.isOnline === true,
+                  isGroup: false,
+                  hasUnreadMessages: unreadCount > 0,
+                  unreadCount: unreadCount,
+                  lastMessage: lastMessage?.text || '',
+                  lastMessageTime: lastMessageTime,
+                  lastMessageSender: lastMessage?.senderId
+                });
               } catch (error) {
                 console.log('Erreur lors du traitement d\'une conversation:', error);
-                return null;
               }
             })
           );
-          setConversations(conversationsData.filter(c => c !== null));
+          
+          updateCombinedList();
         } catch (error) {
           console.log('Erreur lors de la récupération des conversations:', error);
         }
       });
 
+    // Écouter les amis
     const unsubscribeFriends = firestore()
       .collection('friends')
       .where('users', 'array-contains', currentUser.uid)
       .onSnapshot(async (snapshot) => {
         try {
-          const friendsData = await Promise.all(
+          friendsMap.clear();
+          
+          await Promise.all(
             snapshot.docs.map(async (doc) => {
               try {
                 const data = doc.data();
                 const friendId = data.users?.find(uid => uid !== currentUser.uid);
                 
-                if (!friendId) return null;
+                if (!friendId) return;
 
                 const userDoc = await firestore().collection('users').doc(friendId).get();
-                if (userDoc.exists) {
-                  const userData = userDoc.data();
-                  // Même vérification améliorée pour les amis
-                  let avatarUrl = null;
-                  if (userData?.photoURL) {
-                    avatarUrl = userData.photoURL;
-                  } else if (userData?.photoProfil) {
-                    if (userData.photoProfil.startsWith('data:image')) {
-                      avatarUrl = userData.photoProfil;
-                    } else if (userData.photoProfil.startsWith('/9j/')) {
-                      avatarUrl = `data:image/jpeg;base64,${userData.photoProfil}`;
-                    } else {
-                      avatarUrl = userData.photoProfil;
-                    }
-                  } else if (userData?.avatar) {
-                    avatarUrl = userData.avatar;
-                  }
+                if (!userDoc.exists) return;
 
-                  return {
-                    id: friendId,
-                    name: userData?.nom || userData?.displayName || 'Ami',
-                    avatar: avatarUrl,
-                    isOnline: userData?.isOnline || false,
-                    isGroup: false,
-                    hasUnreadMessages: false,
-                    unreadCount: 0,
-                    lastMessage: '',
-                    lastMessageTime: 0
-                  };
-                }
-                return null;
+                const userData = userDoc.data();
+                
+                friendsMap.set(friendId, {
+                  id: friendId,
+                  name: userData?.nom || userData?.displayName || 'Ami',
+                  avatar: getAvatarUrl(userData),
+                  isOnline: userData?.isOnline || false,
+                  isGroup: false
+                });
               } catch (error) {
                 console.log('Erreur lors du traitement d\'un ami:', error);
-                return null;
               }
             })
           );
-          setFriends(friendsData.filter(f => f !== null));
-          setLoading(false);
+          
+          updateCombinedList();
         } catch (error) {
           console.log('Erreur lors de la récupération des amis:', error);
-          setLoading(false);
         }
       });
 
+    // Écouter les groupes
     const unsubscribeGroups = firestore()
       .collection('groups')
       .where('members', 'array-contains', currentUser.uid)
       .onSnapshot(async (snapshot) => {
         try {
-          const groupData = await Promise.all(
+          groupsMap.clear();
+          
+          await Promise.all(
             snapshot.docs.map(async (doc) => {
               try {
                 const data = doc.data();
                 
-                const messages = data.messages || [];
-                const unreadCount = messages.filter(msg => 
-                  msg.senderId !== currentUser.uid && 
-                  (!msg.readBy || !msg.readBy.includes(currentUser.uid))
-                ).length;
+                const lastMessage = {
+                  text: data.lastMessage || '',
+                  senderId: data.lastMessageSender || '',
+                  timestamp: data.lastMessageTime || null,
+                };
+                const lastMessageTime = getTimestamp(lastMessage.timestamp);
+                const unreadCount = 0;
 
-                const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
-                const lastMessageTime = lastMessage ? getTimestamp(lastMessage.timestamp) : 0;
-
-                return {
+                groupsMap.set(doc.id, {
                   id: doc.id,
                   name: data.name || 'Groupe',
                   avatar: data.avatar || null,
@@ -223,14 +338,14 @@ const ChatList = () => {
                   lastMessage: lastMessage?.text || '',
                   lastMessageTime: lastMessageTime,
                   lastMessageSender: lastMessage?.senderId
-                };
+                });
               } catch (error) {
                 console.log('Erreur lors du traitement d\'un groupe:', error);
-                return null;
               }
             })
           );
-          setGroups(groupData.filter(g => g !== null));
+          
+          updateCombinedList();
         } catch (error) {
           console.log('Erreur lors de la récupération des groupes:', error);
         }
@@ -243,6 +358,10 @@ const ChatList = () => {
     };
   }, [currentUser?.uid]);
 
+  const goToCreateGroup = () => {
+    navigation.navigate('CreateGroup');
+  };
+
   const startChat = (friend) => {
     navigation.navigate('Chat2p', {
       recipientId: friend.id,
@@ -253,7 +372,7 @@ const ChatList = () => {
   };
 
   const formatLastMessageTime = (timestamp) => {
-    if (!timestamp) return '';
+    if (!timestamp || timestamp === 0) return '';
     
     try {
       const now = new Date();
@@ -309,7 +428,6 @@ const ChatList = () => {
             style={styles.avatar}
             onError={(e) => {
               console.log("Erreur de chargement de l'avatar:", e.nativeEvent.error);
-              // Vous pourriez ici mettre à jour l'état pour afficher l'avatar par défaut
             }}
             resizeMode="cover"
           />
@@ -320,9 +438,7 @@ const ChatList = () => {
             </Text>
           </View>
         )}
-        {!item.isGroup && (
-          <View style={item.isOnline ? styles.onlineBadge : styles.offlineBadge} />
-        )}
+        
         {item.hasUnreadMessages && item.unreadCount > 0 && (
           <View style={styles.unreadBadge}>
             <Text style={styles.unreadBadgeText}>
@@ -352,9 +468,11 @@ const ChatList = () => {
             styles.friendStatus,
             item.hasUnreadMessages && styles.unreadMessage
           ]} numberOfLines={1}>
-            {item.lastMessage ? 
-              (item.lastMessageSender === currentUser.uid ? 'Vous: ' : '') + item.lastMessage :
-              item.isGroup ? 'Groupe' : (item.isOnline ? 'En ligne' : 'Hors ligne')
+            {item.lastMessage
+              ? (item.lastMessageSender === currentUser.uid
+                  ? `Vous: ${item.lastMessage}`
+                  : item.lastMessage)
+              : 'Commencer une conversation'
             }
           </Text>
         </View>
@@ -401,7 +519,7 @@ const ChatList = () => {
       <FlatList
         data={combinedList}
         renderItem={renderItem}
-        keyExtractor={(item, index) => item.id || index.toString()}
+        keyExtractor={(item, index) => `${item.type}-${item.id}` || index.toString()}
         contentContainerStyle={combinedList.length === 0 ? styles.emptyContainer : null}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
@@ -547,11 +665,13 @@ const styles = StyleSheet.create({
   messagePreviewContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: 20,
   },
   friendStatus: {
     fontSize: 14,
     color: '#666',
     flex: 1,
+    opacity: 1,
   },
   unreadMessage: {
     fontWeight: '600',

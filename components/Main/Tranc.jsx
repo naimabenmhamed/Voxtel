@@ -24,6 +24,7 @@ export const uploadAudio = async (audioPath) => {
         Accept: 'application/json',
       },
       timeout: 30000,
+      
     });
 
     console.log('Transcription response:', response.data);

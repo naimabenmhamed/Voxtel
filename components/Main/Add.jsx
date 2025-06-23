@@ -88,6 +88,17 @@ export default function Add({ navigation, route }) {
   setTranscribedTextes,
  
   } = Audio(route, navigation);
+useEffect(() => {
+  if (transcribedText) {
+    setTitle(transcribedText);
+  }
+}, [transcribedText]);
+
+useEffect(() => {
+  if (transcribedTextes) {
+    setLeçon(transcribedTextes);
+  }
+}, [transcribedTextes]);
 
 const handleCancelEdit = () => {
   setIdToUpdate(null);
@@ -97,7 +108,35 @@ const handleCancelEdit = () => {
   setInitialLeçon('');
   navigation.goBack(); // ou navigation.navigate('ToNotes') si vous voulez rediriger
 };
+const convertAndSave = async () => {
+  try {
+    // 1. Convertir les valeurs transcrites en valeurs principales si elles existent
+    const finalTitle = transcribedText || title;
+    const finalLecon = transcribedTextes || leçon;
 
+    // 2. Mettre à jour les états principaux
+    setTitle(finalTitle);
+    setLeçon(finalLecon);
+
+    // 3. Attendre un court instant pour que les états se mettent à jour
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // 4. Appeler la fonction de sauvegarde originale
+    await handleAddOrUpdate();
+// 5. Effacer les états après sauvegarde
+    setTitle('');
+    setLeçon('');
+    setTranscribedText('');
+    setTranscribedTextes('');
+    setImageBase64(null);
+    setRecordedFilePath('');
+    setRecordedFilePathes('');
+
+  } catch (error) {
+    console.error("Erreur lors de la sauvegarde:", error);
+    Alert.alert("Erreur", "Impossible de sauvegarder la leçon");
+  }
+};
   return (
     <View style={styles.container}>
       <ScrollView>
@@ -134,14 +173,17 @@ const handleCancelEdit = () => {
               </TouchableOpacity>
             )}
           </View>
+        
           <TextInput
-            style={styles.input}
-            value={title}
-            onChangeText={setTitle}
-            placeholder="Entrer le Titre"
-             placeholderTextColor="#999" 
-          />
-
+  style={styles.input}
+  value={transcribedText || title}
+  onChangeText={(text) => {
+    setTitle(text);
+    setTranscribedText(text);
+  }}
+  placeholder="Entrer le Titre"
+  placeholderTextColor="#999" 
+/>
           {/* Section ingredient */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}}>
             <Text style={styles.label}>Leçon</Text>
@@ -173,15 +215,19 @@ const handleCancelEdit = () => {
               </TouchableOpacity>
             )}
           </View>
+          
           <TextInput
-            style={[styles.input, styles.textArea]}
-            value={leçon}
-            onChangeText={setLeçon}
-            placeholder="Entrer le Leçon"
-             placeholderTextColor="#999" 
-            multiline
-            numberOfLines={5}
-          />
+  style={[styles.input, styles.textArea]}
+  value={transcribedTextes || leçon}
+  onChangeText={(text) => {
+    setLeçon(text);
+    setTranscribedTextes(text);
+  }}
+  placeholder="Entrer le Leçon"
+  placeholderTextColor="#999" 
+  multiline
+  numberOfLines={5}
+/>
 
              {/* Section Description */}
          
@@ -240,7 +286,7 @@ const handleCancelEdit = () => {
 </View>
 <TouchableOpacity 
             style={styles.button} 
-            onPress={handleAddOrUpdate}
+           onPress={convertAndSave}
             disabled={loading}
           >
             <Text style={styles.buttonText}>

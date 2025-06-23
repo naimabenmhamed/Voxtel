@@ -121,16 +121,16 @@ useEffect(() => {
           style={[styles.tabButton, activeTab === 0 && styles.activeTab]}
           onPress={() => setActiveTab(0)}
         >
-          <Icon name="grid" size={24} color={activeTab === 0 ? "#1E90FF" : "#7f8c8d"} />
-          <Text style={styles.tabLabel}>Home</Text>
+          <Icon name="lock-closed" size={24} color={activeTab === 1 ? "#7f8c8d" : "#1E90FF"} />
+    <Text style={styles.tabLabel}>Privés</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.tabButton, activeTab === 1 && styles.activeTab]}
           onPress={() => setActiveTab(1)}
         >
-          <Icon name="person" size={24} color={activeTab === 1 ? "#1E90FF" : "#7f8c8d"} />
-          <Text style={styles.tabLabel}>Profil</Text>
+         <Icon name="earth" size={24} color={activeTab === 0 ? "#7f8c8d" : "#1E90FF"} />
+    <Text style={styles.tabLabel}>Publics</Text>
         </TouchableOpacity>
       </View>
 

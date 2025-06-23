@@ -1,7 +1,7 @@
-from fastapi import FastAPI, Form
-from fastapi.middleware.cors import CORSMiddleware
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-import torch
+from fastapi import FastAPI, # Form permet de recevoir des donnèes sous forme de formulaire (texte)
+from fastapi.middleware.cors import CORSMiddleware # pour autoriser les requetes depuis l'origine (dommaine web)
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM # importer des outils pour faire le resumer 
+import torch #sert à créer et manipuler des tenseurs efficacement.
 
 app = FastAPI()
 
